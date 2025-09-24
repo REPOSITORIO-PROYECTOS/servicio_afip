@@ -2,6 +2,35 @@
 
 Todos los cambios notables en este proyecto serán documentados en este archivo.
 
+## [2.4.0] - 2025-09-24
+
+### 🚀 Mejoras Críticas de Conectividad y Robustez
+- **Manejo Robusto de Errores de Conexión**: Implementado manejo específico para `ConnectionResetError`, `SSL errors` y `TypeError` con reintentos automáticos
+- **Limpieza Automática de Cache**: Detección automática de tokens expirados y limpieza de cache sin intervención manual
+- **Sistema de Reconexión Inteligente**: Reconexión automática en caso de fallas de conexión con AFIP
+- **Respuesta JSON Completa**: Corregido el modelo de respuesta para incluir todos los campos esperados por el cliente
+
+### 🔧 Correcciones de Bugs
+- **Solucionado Error de Token Expirado**: Renovación automática de tokens AFIP cuando expiran
+- **Eliminado TypeError en pyafipws**: Manejo correcto de excepciones sin usar indexación `e[0]`
+- **Mejorado Manejo SSL/TLS**: Detección y recuperación automática de errores SSL
+- **Corregida Estructura de Respuesta**: JSON de respuesta ahora coincide 100% con `factura_response_model`
+
+### 📊 Logging y Debugging
+- **Logs Detallados**: Agregado logging completo de datos recibidos para debugging
+- **Trazabilidad de Errores**: Logs específicos para cada tipo de error y intento de recuperación
+- **Monitoreo Mejorado**: Logs claros para identificar problemas de conectividad
+
+### ⚡ Rendimiento
+- **Reintentos Inteligentes**: Máximo 2 intentos por operación antes de fallar definitivamente  
+- **Reutilización de Conexiones**: Mantiene conexiones válidas, fuerza reconexión solo cuando es necesario
+- **Cache Optimizado**: Limpieza selectiva de cache solo cuando se detectan errores de token
+
+### 🛡️ Robustez
+- **Recuperación Automática**: El servicio se recupera automáticamente de la mayoría de errores temporales
+- **Sin Intervención Manual**: Eliminada la necesidad de reiniciar manualmente el servicio por tokens expirados
+- **Tolerancia a Fallas**: Continúa operando ante fallas de red temporales
+
 ## [2.3.0] - 2025-07-09
 
 ### Nuevas características

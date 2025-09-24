@@ -1,0 +1,14 @@
+# ~/microservicio_facturacion/servicio_afip/docker-compose.yml
+
+# No se necesita la línea 'version'.
+
+services:
+  # Un nombre de servicio simple y descriptivo.
+  afip_service:
+    build: .
+    ports:
+      # Mapea el puerto 8002 de tu máquina (localhost) al puerto 8002
+      # donde Gunicorn está escuchando DENTRO del contenedor.
+      # PUERTO_EXTERNO:PUERTO_INTERNO
+      - "8002:8002"
+    restart: unless-stopped
