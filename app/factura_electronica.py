@@ -21,7 +21,11 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             wsfev1 = afip_conector.conectar(credenciales, production=True, force_reconnect=force_reconnect)
             break
         except Exception as e:
+            # Si la excepción es ValueError (p. ej. PEM inválido), considerarla error de entrada
             logger.error(f"Intento {intento + 1}/{max_reintentos} - Fallo al conectar/autenticar con AFIP: {e}")
+            if isinstance(e, ValueError):
+                # Propagar ValueError para que la capa de rutas retorne 400
+                raise
             if intento == max_reintentos - 1:  # Último intento
                 logger.error(f"Fallo definitivo de autenticación AFIP después de {max_reintentos} intentos", exc_info=True)
                 raise RuntimeError(f"Fallo de autenticación AFIP: {e}")
@@ -36,6 +40,17 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             try:
                 ultimo_cbte = wsfev1.CompUltimoAutorizado(tipo_cbte, punto_vta)
                 break
+            except TypeError as conn_error:
+                # Algunos errores (p. ej. en pyafipws) lanzan TypeError al indexar excepciones internas.
+                error_msg = str(conn_error)
+                error_type = type(conn_error).__name__
+                logger.warning(f"TypeError tratado como error de conexión al consultar último comprobante (intento {intento_op + 1}): {error_msg}")
+                if intento_op < max_reintentos_operacion - 1:
+                    logger.info(f"Forzando reconexión debido a TypeError (intento {intento_op + 1})...")
+                    wsfev1 = afip_conector.conectar(credenciales, production=True, force_reconnect=True)
+                    continue
+                else:
+                    raise ConnectionError(f"Fallo de conexión por TypeError después de {max_reintentos_operacion} intentos: {error_msg}")
             except Exception as conn_error:
                 # Manejo robusto de diferentes tipos de error
                 error_msg = str(conn_error)
@@ -115,9 +130,42 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             try:
                 wsfev1.CAESolicitar()
                 break
+            except TypeError as cae_error:
+                # Capturamos TypeError originados por la librería externa y los tratamos como errores de conexión
+                error_msg = str(cae_error)
+                logger.warning(f"TypeError tratado como error de conexión al solicitar CAE (intento {intento_cae + 1}): {error_msg}")
+                if intento_cae < max_reintentos_cae - 1:
+                    logger.info(f"Forzando reconexión por TypeError en CAE (intento {intento_cae + 1})...")
+                    wsfev1 = afip_conector.conectar(credenciales, production=True, force_reconnect=True)
+                    # Recrear factura
+                    wsfev1.CrearFactura(
+                        concepto=1,
+                        tipo_doc=datos_factura.get("tipo_documento"),
+                        nro_doc=datos_factura.get("documento"),
+                        tipo_cbte=tipo_cbte,
+                        punto_vta=punto_vta,
+                        cbt_desde=siguiente_cbte,
+                        cbt_hasta=siguiente_cbte,
+                        imp_total=total,
+                        imp_neto=imp_neto,
+                        imp_iva=imp_iva,
+                        imp_tot_conc=imp_tot_conc,
+                        imp_op_ex=imp_op_ex,
+                        fecha_cbte=datetime.date.today().strftime("%Y%m%d")
+                    )
+                    if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
+                        if imp_iva > 0:
+                            logger.info("Reagregando IVA 21% después de reconexión por TypeError")
+                            wsfev1.AgregarIva(5, round(imp_neto,2), round(imp_iva,2))
+                        else:
+                            logger.info("Reagregando IVA 0% después de reconexión por TypeError")
+                            wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+                    continue
+                else:
+                    raise ConnectionError(f"Fallo de conexión por TypeError en CAE después de {max_reintentos_cae} intentos: {error_msg}")
             except Exception as cae_error:
                 # Manejo robusto de diferentes tipos de error
-                error_msg = str(cae_error) 
+                error_msg = str(cae_error)
                 error_type = type(cae_error).__name__
                 
                 logger.warning(f"Error {error_type} al solicitar CAE (intento {intento_cae + 1}): {error_msg}")

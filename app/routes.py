@@ -145,6 +145,12 @@ class FacturadorResource(Resource):
             
             return result
             
+        except ValueError as e:
+            # Errores del cliente (por ejemplo PEM inválido) devuelven 400 para facilitar diagnóstico
+            error_type = type(e).__name__
+            error_message = str(e)
+            logger.warning(f'Error de cliente: {error_type}: {error_message}')
+            afipws_ns.abort(400, message=f"Error de entrada: {error_message}")
         except Exception as e:
             # --- BLOQUE DE DEPURACIÓN MEJORADO ---
             error_type = type(e).__name__
