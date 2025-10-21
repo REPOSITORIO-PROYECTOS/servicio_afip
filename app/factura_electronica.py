@@ -219,7 +219,53 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
 
         if wsfev1.Resultado != "A":
             errores = ". ".join(filter(None, wsfev1.Observaciones + wsfev1.Errores))
-            raise RuntimeError(f"AFIP rechazó la factura: {errores}")
+            # Detectar error de token expirado y forzar limpieza de cache y reintento
+            error_str = str(errores).lower()
+            is_token_error = any(keyword in error_str for keyword in ["token", "validacion", "fechas", "gentime", "exptime"])
+            if is_token_error:
+                logger.warning(f"Error de token detectado en facturación: {errores}")
+                # Limpiar cache de tokens
+                try:
+                    import glob, os
+                    from app.config import CACHE
+                    cache_files = glob.glob(f"{CACHE}/*")
+                    for cache_file in cache_files:
+                        os.remove(cache_file)
+                    logger.info("Cache de tokens limpiado exitosamente. Reintentando facturación...")
+                except Exception as cache_err:
+                    logger.error(f"Error al limpiar cache de tokens: {cache_err}")
+                # Forzar reconexión y reintentar CAE
+                wsfev1 = afip_conector.conectar(credenciales, production=True, force_reconnect=True)
+                # Recrear la factura
+                wsfev1.CrearFactura(
+                    concepto=1,
+                    tipo_doc=datos_factura.get("tipo_documento"),
+                    nro_doc=datos_factura.get("documento"),
+                    tipo_cbte=tipo_cbte,
+                    punto_vta=punto_vta,
+                    cbt_desde=siguiente_cbte,
+                    cbt_hasta=siguiente_cbte,
+                    imp_total=total,
+                    imp_neto=imp_neto,
+                    imp_iva=imp_iva,
+                    imp_tot_conc=imp_tot_conc,
+                    imp_op_ex=imp_op_ex,
+                    fecha_cbte=datetime.date.today().strftime("%Y%m%d")
+                )
+                if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
+                    if imp_iva > 0:
+                        logger.info("Reagregando IVA 21% después de limpieza de token")
+                        wsfev1.AgregarIva(5, round(imp_neto,2), round(imp_iva,2))
+                    else:
+                        logger.info("Reagregando IVA 0% después de limpieza de token")
+                        wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+                # Reintentar CAE
+                wsfev1.CAESolicitar()
+                if wsfev1.Resultado != "A":
+                    errores = ". ".join(filter(None, wsfev1.Observaciones + wsfev1.Errores))
+                    raise RuntimeError(f"AFIP rechazó la factura tras reintento: {errores}")
+            else:
+                raise RuntimeError(f"AFIP rechazó la factura: {errores}")
         
         logger.info(f"¡Factura autorizada! Nro: {wsfev1.CbteNro}, CAE: {wsfev1.CAE}")
 
