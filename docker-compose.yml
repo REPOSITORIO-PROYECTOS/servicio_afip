@@ -12,3 +12,51 @@ services:
       # PUERTO_EXTERNO:PUERTO_INTERNO
       - "8002:8002"
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys;
+
+            try:
+
+            \ r=urllib.request.urlopen('http://127.0.0.1:8002/afipws/test',timeout=3);
+
+            \ sys.exit(0 if r.getcode()==200 else 1)
+
+            except Exception:
+
+            \ sys.exit(1)\" "
+        ]
+      interval: "30s"
+      timeout: "5s"
+      retries: 3
+      start_period: "25s"
+  afip_monitor:
+    image: docker:27.3.1-cli
+    user: root
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - ALERT_WEBHOOK_URL
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - sh
+      - -lc
+      - |
+        echo "afip_monitor started";
+        apk add --no-cache curl >/dev/null;
+        docker events --format '{{json .}}' \
+          --filter 'type=container' \
+          --filter 'event=die' \
+          --filter 'event=health_status' \
+          --filter 'label=com.docker.compose.service=afip_service' \
+        | while read -r line; do
+            ts=$$(date -u +%FT%TZ);
+            msg="[$$ts] AFIP event: $$line";
+            if [ -n "$$ALERT_WEBHOOK_URL" ]; then
+              curl -s -X POST -H 'Content-Type: application/json' -d "{\"text\":\"$$msg\"}" "$$ALERT_WEBHOOK_URL" >/dev/null || true;
+            fi;
+            echo "$$msg";
+          done
+    restart: unless-stopped

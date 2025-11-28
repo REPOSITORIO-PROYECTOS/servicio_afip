@@ -1,0 +1,214 @@
+================================================================================
+GUÍA DE CONSUMO DEL MICROSERVICIO AFIP (MULTI-CUIT) - BACKEND CLIENTE
+================================================================================
+
+OBJETIVO:
+Instrucciones claras para invocar correctamente el endpoint de facturación del microservicio AFIP usando credenciales dinámicas (multi-tenant) y evitar el uso de un CUIT fijo.
+
+--------------------------------------------------------------------------------
+1. ENDPOINT PRINCIPAL DE FACTURACIÓN
+--------------------------------------------------------------------------------
+Método: POST
+Ruta:   /afipws/facturador
+Header: Content-Type: application/json
+
+Estructura OBLIGATORIA del payload:
+{
+  "credenciales": {
+    "cuit": "30718331680",
+    "certificado": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
+    "clave_privada": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+  },
+  "datos_factura": {
+    "tipo_afip": 11,
+    "punto_venta": 4,
+    "tipo_documento": 96,
+    "documento": "11111111",
+    "total": 1000.0,
+    "neto": 1000.0,
+    "iva": 0.0,
+    "id_condicion_iva": 5
+  }
+}
+
+Campos mínimos requeridos:
+- credenciales.cuit (11 dígitos)
+- credenciales.certificado (PEM completo)
+- credenciales.clave_privada (PEM completo)
+- datos_factura.tipo_afip
+- datos_factura.punto_venta
+- datos_factura.tipo_documento
+- datos_factura.documento
+- datos_factura.total (> 0)
+- datos_factura.id_condicion_iva
+
+Opcionales según caso:
+- neto / iva / neto105 / iva105
+- asociado_tipo_afip / asociado_punto_venta / asociado_numero_comprobante / asociado_fecha_comprobante
+
+--------------------------------------------------------------------------------
+2. TABLA RESUMEN TIPOS DE COMPROBANTE (tipo_afip)
+--------------------------------------------------------------------------------
+1  = Factura A      (IVA discriminado)
+6  = Factura B      (IVA discriminado)
+11 = Factura C      (IVA = 0, total pasa a neto)
+3 / 8 / 13 = Notas de Crédito A / B / C (requieren datos asociado_*)
+2 / 7 / 12 = Notas de Débito  A / B / C (requieren datos asociado_*)
+
+Regla Factura C (11): ignorar IVA enviado y poner IVA = 0 (microservicio ya lo hace).
+
+--------------------------------------------------------------------------------
+3. VALIDACIONES PREVIAS (DEL LADO DEL BACKEND CLIENTE)
+--------------------------------------------------------------------------------
+Antes de enviar:
+[ ] CUIT formato ^\d{11}$
+[ ] Cert y Key contienen encabezados/footers PEM
+[ ] total > 0
+[ ] Si A/B: neto + iva coherentes
+[ ] Si C: forzar iva = 0
+[ ] Si nota crédito/débito: todos los campos asociado_*
+[ ] Documento numérico si tipo_documento != 99
+[ ] punto_venta int
+[ ] tipo_afip permitido
+
+--------------------------------------------------------------------------------
+4. EJEMPLOS
+--------------------------------------------------------------------------------
+Ejemplo curl (Factura C):
+curl -s -X POST http://HOST:PUERTO/afipws/facturador \
+  -H "Content-Type: application/json" \
+  -d @factura_c.json | jq
+
+Contenido factura_c.json:
+{
+  "credenciales": {
+    "cuit": "30718331680",
+    "certificado": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+    "clave_privada": "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----"
+  },
+  "datos_factura": {
+    "tipo_afip": 11,
+    "punto_venta": 4,
+    "tipo_documento": 96,
+    "documento": "11111111",
+    "total": 1.0,
+    "neto": 1.0,
+    "iva": 0.0,
+    "id_condicion_iva": 5
+  }
+}
+
+Ejemplo Python (requests):
+import requests
+payload = { ... }  # Igual estructura arriba
+r = requests.post("http://HOST:PUERTO/afipws/facturador", json=payload, timeout=40)
+print(r.status_code, r.json())
+
+--------------------------------------------------------------------------------
+5. RESPUESTA TÍPICA EXITOSA
+--------------------------------------------------------------------------------
+{
+  "tipo_documento": 96,
+  "documento": "11111111",
+  "tipo_afip": 11,
+  "punto_venta": 4,
+  "total": 1.0,
+  "exento": 0.0,
+  "neto": 1.0,
+  "neto105": 0.0,
+  "iva": 0.0,
+  "iva105": 0.0,
+  "resultado": "A",
+  "cae": "75399328607897",
+  "vencimiento_cae": "20251004",
+  "numero_comprobante": 32,
+  "fecha_comprobante": "2025-09-24",
+  "asociado_tipo_afip": null,
+  "asociado_punto_venta": null,
+  "asociado_numero_comprobante": null,
+  "asociado_fecha_comprobante": null,
+  "id_condicion_iva": 5
+}
+
+Campos recomendados para persistir:
+- cae, vencimiento_cae
+- numero_comprobante, punto_venta, tipo_afip
+- fecha_comprobante
+- cuit_emisor (el que ustedes resolvieron, viene del payload)
+- documento / tipo_documento
+- total / neto / iva
+- raw_response (JSON serializado)
+
+IMPORTANTE: Si agregan campos propios (created_at, etc.), convertir datetime a string antes de serializar.
+
+--------------------------------------------------------------------------------
+6. ERRORES COMUNES
+--------------------------------------------------------------------------------
+Problema: Siempre mismo CUIT en respuesta.
+Causa: Reutilizan un único par credenciales. 
+Acción: Lookup dinámico por emisor antes de cada POST.
+
+Problema: TypeError datetime no serializable.
+Acción: usar objeto.isoformat() antes de json.dumps.
+
+Problema: AFIP rechazó factura (token fechas).
+Acción: reenviar (el microservicio ya renueva token internamente).
+
+Problema: IVA en Factura C distinto de 0.
+Acción: eliminar/forzar a 0 antes de enviar.
+
+--------------------------------------------------------------------------------
+7. CHECKLIST DE ADOPCIÓN MULTI-CUIT
+--------------------------------------------------------------------------------
+[ ] Lookup dinámico de credenciales implementado
+[ ] Logging previo: cuit + punto_venta + tipo_afip
+[ ] Prueba con 2 CUIT distintos (secuencial)
+[ ] Prueba con 2 CUIT distintos (paralelo)
+[ ] Prueba Factura C y Factura A
+[ ] Prueba Nota de Crédito con asociado_*
+[ ] Persistencia sin errores de serialización
+[ ] raw_response guardado intacto
+
+--------------------------------------------------------------------------------
+8. PSEUDOCÓDIGO FLUJO INTERNO (RECOMENDADO)
+--------------------------------------------------------------------------------
+# obtener datos de negocio → determinar emisor
+cred = obtener_credenciales(emisor_id)  # {cuit, certificado, clave}
+payload = construir_payload(cred, datos_factura)
+validar(payload)
+resp = post_afip(payload)
+if resp["resultado"] != "A": manejar_rechazo(resp)
+persistir(resp, cred["cuit"])  # convertir datetimes propios
+return resp
+
+--------------------------------------------------------------------------------
+9. QUÉ NO HACER
+--------------------------------------------------------------------------------
+- Hardcodear un solo CUIT para todos.
+- Cachear indefinidamente certificado/clave de un solo emisor.
+- Enviar payload sin el bloque "credenciales".
+- Alterar campos de la respuesta original antes de guardarla (solo enriquecer afuera).
+- Suponer que punto de venta = 1 siempre.
+
+--------------------------------------------------------------------------------
+10. VALIDACIÓN DE CERT Y KEY (OPCIONAL LADO CLIENTE)
+--------------------------------------------------------------------------------
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.backends import default_backend
+
+def fingerprint_cert(pem):
+    cert = x509.load_pem_x509_certificate(pem.encode(), default_backend())
+    return cert.fingerprint(hashes.SHA1()).hex()
+
+def validar_key(priv_pem):
+    serialization.load_pem_private_key(priv_pem.encode(), password=None, backend=default_backend())
+
+--------------------------------------------------------------------------------
+11. MENSAJE RESUMEN PARA EQUIPO
+--------------------------------------------------------------------------------
+Cada factura debe enviarse con sus credenciales completas (CUIT + certificado + clave). Si siempre se ve el mismo CUIT, el backend no está haciendo lookup dinámico. La respuesta ya incluye todos los campos necesarios para persistencia fiscal. Cualquier datetime agregado por ustedes debe serializarse antes de guardarlo.
+
+--------------------------------------------------------------------------------
+FIN DEL DOCUMENTO
+--------------------------------------------------------------------------------
