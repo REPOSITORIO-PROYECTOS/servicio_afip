@@ -132,6 +132,62 @@ payload = { ... }  # Igual estructura arriba
 r = requests.post("http://HOST:PUERTO/afipws/facturador", json=payload, timeout=40)
 print(r.status_code, r.json())
 
+Ejemplo curl (Nota de Crédito A sobre Factura A asociada):
+curl -s -X POST http://HOST:PUERTO/afipws/facturador \
+  -H "Content-Type: application/json" \
+  -d @nota_credito_a.json | jq
+
+Contenido nota_credito_a.json:
+{
+  "credenciales": {
+    "cuit": "30718331680",
+    "certificado": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+    "clave_privada": "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----"
+  },
+  "datos_factura": {
+    "tipo_afip": 3,
+    "punto_venta": 4,
+    "tipo_documento": 80,
+    "documento": "20123456789",
+    "total": 1210.0,
+    "neto": 1000.0,
+    "iva": 210.0,
+    "id_condicion_iva": 1,
+    "asociado_tipo_afip": 1,
+    "asociado_punto_venta": 4,
+    "asociado_numero_comprobante": 123,
+    "asociado_fecha_comprobante": "2025-09-24"
+  }
+}
+
+Ejemplo curl (Nota de Crédito B sobre Factura B asociada):
+curl -s -X POST http://HOST:PUERTO/afipws/facturador \
+  -H "Content-Type: application/json" \
+  -d @nota_credito_b.json | jq
+
+Contenido nota_credito_b.json:
+{
+  "credenciales": {
+    "cuit": "30718331680",
+    "certificado": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+    "clave_privada": "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----"
+  },
+  "datos_factura": {
+    "tipo_afip": 8,
+    "punto_venta": 4,
+    "tipo_documento": 80,
+    "documento": "20123456789",
+    "total": 1210.0,
+    "neto": 1000.0,
+    "iva": 210.0,
+    "id_condicion_iva": 5,
+    "asociado_tipo_afip": 6,
+    "asociado_punto_venta": 4,
+    "asociado_numero_comprobante": 456,
+    "asociado_fecha_comprobante": "2025-09-24"
+  }
+}
+
 --------------------------------------------------------------------------------
 5. RESPUESTA TÍPICA EXITOSA
 --------------------------------------------------------------------------------
