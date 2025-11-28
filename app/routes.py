@@ -178,3 +178,30 @@ def register_routes(config: Dict, api):
     
     # Agregar namespace a la API
     api.add_namespace(afipws_ns)
+@afipws_ns.route('/facturador/emitir-nota-credito')
+class NotaCreditoResource(Resource):
+    @afipws_ns.doc('emitir_nota_credito')
+    @afipws_ns.expect(factura_multitenant_model)
+    @afipws_ns.marshal_with(factura_response_model)
+    def post(self):
+        try:
+            payload = request.get_json()
+            credenciales = payload.get('credenciales')
+            datos = payload.get('datos_factura')
+            if not credenciales or not datos:
+                afipws_ns.abort(400, "El JSON debe contener 'credenciales' y 'datos_factura'")
+            if datos.get('tipo_afip') not in [3, 8, 13]:
+                afipws_ns.abort(400, "tipo_afip debe ser 3/8/13 para Nota de Crédito")
+            faltan = [k for k in ['asociado_tipo_afip','asociado_punto_venta','asociado_numero_comprobante','asociado_fecha_comprobante'] if not datos.get(k)]
+            if faltan:
+                afipws_ns.abort(400, f"Faltan campos asociado_*: {', '.join(faltan)}")
+            return facturar(credenciales, datos)
+        except ValueError as e:
+            afipws_ns.abort(400, message=f"Error de entrada: {str(e)}")
+        except Exception as e:
+            error_type = type(e).__name__
+            logger.error(f'!!!!!!!! ERROR FATAL ENCONTRADO !!!!!!!!')
+            logger.error(f'TIPO DE EXCEPCIÓN: {error_type}')
+            logger.error(f'MENSAJE DE EXCEPCIÓN: {str(e)}')
+            logger.error('TRACEBACK COMPLETO:', exc_info=True)
+            afipws_ns.abort(500, message=f"Error interno del servidor: {error_type}: {str(e)}")

@@ -6,13 +6,13 @@ OBJETIVO:
 Instrucciones claras para invocar correctamente el endpoint de facturación del microservicio AFIP usando credenciales dinámicas (multi-tenant) y evitar el uso de un CUIT fijo.
 
 --------------------------------------------------------------------------------
-1. ENDPOINT PRINCIPAL DE FACTURACIÓN
+1. ENDPOINT PRINCIPAL DE FACTURACIÓN Y NOTAS
 --------------------------------------------------------------------------------
 Método: POST
 Ruta:   /afipws/facturador
 Header: Content-Type: application/json
 
-Estructura OBLIGATORIA del payload:
+Estructura OBLIGATORIA del payload (factura o nota):
 {
   "credenciales": {
     "cuit": "30718331680",
@@ -44,7 +44,7 @@ Campos mínimos requeridos:
 
 Opcionales según caso:
 - neto / iva / neto105 / iva105
-- asociado_tipo_afip / asociado_punto_venta / asociado_numero_comprobante / asociado_fecha_comprobante
+- asociado_tipo_afip / asociado_punto_venta / asociado_numero_comprobante / asociado_fecha_comprobante (OBLIGATORIOS si es Nota Crédito/Débito)
 
 --------------------------------------------------------------------------------
 2. TABLA RESUMEN TIPOS DE COMPROBANTE (tipo_afip)
@@ -95,6 +95,34 @@ Contenido factura_c.json:
     "neto": 1.0,
     "iva": 0.0,
     "id_condicion_iva": 5
+  }
+}
+
+Ejemplo curl (Nota de Crédito C sobre Factura C asociada):
+curl -s -X POST http://HOST:PUERTO/afipws/facturador \
+  -H "Content-Type: application/json" \
+  -d @nota_credito_c.json | jq
+
+Contenido nota_credito_c.json:
+{
+  "credenciales": {
+    "cuit": "30718331680",
+    "certificado": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+    "clave_privada": "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----"
+  },
+  "datos_factura": {
+    "tipo_afip": 13,
+    "punto_venta": 4,
+    "tipo_documento": 96,
+    "documento": "11111111",
+    "total": 1000.0,
+    "neto": 1000.0,
+    "iva": 0.0,
+    "id_condicion_iva": 5,
+    "asociado_tipo_afip": 11,
+    "asociado_punto_venta": 4,
+    "asociado_numero_comprobante": 32,
+    "asociado_fecha_comprobante": "2025-09-24"
   }
 }
 
@@ -155,7 +183,14 @@ Problema: AFIP rechazó factura (token fechas).
 Acción: reenviar (el microservicio ya renueva token internamente).
 
 Problema: IVA en Factura C distinto de 0.
-Acción: eliminar/forzar a 0 antes de enviar.
+Accin: eliminar/forzar a 0 antes de enviar.
+
+Problema: "Clave privada en formato PEM inválida o no soportada" (400).
+Accin: usar una clave compatible (RSA/PKCS#8 sin passphrase). Convertir si es necesario:
+openssl pkcs8 -topk8 -nocrypt -in original.key -out compatible.key
+
+Problema: Nota de Crédito/Débito sin datos asociado_*.
+Accin: enviar todos los campos asociado_*: tipo, punto_venta, numero_comprobante y fecha (YYYY-MM-DD o YYYYMMDD).
 
 --------------------------------------------------------------------------------
 7. CHECKLIST DE ADOPCIÓN MULTI-CUIT
@@ -165,7 +200,7 @@ Acción: eliminar/forzar a 0 antes de enviar.
 [ ] Prueba con 2 CUIT distintos (secuencial)
 [ ] Prueba con 2 CUIT distintos (paralelo)
 [ ] Prueba Factura C y Factura A
-[ ] Prueba Nota de Crédito con asociado_*
+[ ] Prueba Nota de Crédito/Débito con asociado_*
 [ ] Persistencia sin errores de serialización
 [ ] raw_response guardado intacto
 
@@ -207,7 +242,7 @@ def validar_key(priv_pem):
 --------------------------------------------------------------------------------
 11. MENSAJE RESUMEN PARA EQUIPO
 --------------------------------------------------------------------------------
-Cada factura debe enviarse con sus credenciales completas (CUIT + certificado + clave). Si siempre se ve el mismo CUIT, el backend no está haciendo lookup dinámico. La respuesta ya incluye todos los campos necesarios para persistencia fiscal. Cualquier datetime agregado por ustedes debe serializarse antes de guardarlo.
+Cada emisión (factura o nota) debe enviarse con credenciales completas (CUIT + certificado + clave). El endpoint es único (`/afipws/facturador`); la operación se define por `tipo_afip`. Para notas de crédito/débito, los campos `asociado_*` son obligatorios. Si siempre se ve el mismo CUIT, el backend no está haciendo lookup dinámico. La respuesta incluye todos los campos necesarios para persistencia fiscal. Cualquier datetime propio debe serializarse antes de guardarlo.
 
 --------------------------------------------------------------------------------
 FIN DEL DOCUMENTO

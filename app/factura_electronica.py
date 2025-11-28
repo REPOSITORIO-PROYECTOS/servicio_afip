@@ -33,6 +33,11 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
     try:
         tipo_cbte = datos_factura.get("tipo_afip")
         punto_vta = datos_factura.get("punto_venta")
+        asoc_tipo = datos_factura.get("asociado_tipo_afip")
+        asoc_punto_vta = datos_factura.get("asociado_punto_venta")
+        asoc_nro = datos_factura.get("asociado_numero_comprobante")
+        asoc_fecha = datos_factura.get("asociado_fecha_comprobante")
+        es_nota = tipo_cbte in [3, 8, 13, 2, 7, 12]
         
         # Intentar obtener último comprobante con manejo robusto de errores
         max_reintentos_operacion = 2
@@ -112,7 +117,16 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             imp_op_ex=imp_op_ex,
             fecha_cbte=datetime.date.today().strftime("%Y%m%d")
         )
-
+        if es_nota:
+            if not (asoc_tipo and asoc_punto_vta is not None and asoc_nro and asoc_fecha):
+                raise ValueError("Faltan campos asociado_* para nota crédito/débito")
+            try:
+                asoc_pv_int = int(asoc_punto_vta)
+                asoc_nro_int = int(asoc_nro)
+            except Exception:
+                raise ValueError("Formato inválido en asociado_punto_venta o asociado_numero_comprobante")
+            fecha_asoc = str(asoc_fecha).replace("-", "")
+            wsfev1.AgregarCmpAsoc(asoc_tipo, asoc_pv_int, asoc_nro_int, fecha=fecha_asoc)
 
         if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
             if imp_iva > 0:
@@ -153,6 +167,9 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                         imp_op_ex=imp_op_ex,
                         fecha_cbte=datetime.date.today().strftime("%Y%m%d")
                     )
+                    if es_nota:
+                        fecha_asoc = str(asoc_fecha).replace("-", "")
+                        wsfev1.AgregarCmpAsoc(asoc_tipo, int(asoc_punto_vta), int(asoc_nro), fecha=fecha_asoc)
                     if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
                         if imp_iva > 0:
                             logger.info("Reagregando IVA 21% después de reconexión por TypeError")
@@ -201,6 +218,9 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                         imp_op_ex=imp_op_ex,
                         fecha_cbte=datetime.date.today().strftime("%Y%m%d")
                     )
+                    if es_nota:
+                        fecha_asoc = str(asoc_fecha).replace("-", "")
+                        wsfev1.AgregarCmpAsoc(asoc_tipo, int(asoc_punto_vta), int(asoc_nro), fecha=fecha_asoc)
                     
                     # Reagregar IVA si corresponde
                     if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
@@ -252,6 +272,9 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                     imp_op_ex=imp_op_ex,
                     fecha_cbte=datetime.date.today().strftime("%Y%m%d")
                 )
+                if es_nota:
+                    fecha_asoc = str(asoc_fecha).replace("-", "")
+                    wsfev1.AgregarCmpAsoc(asoc_tipo, int(asoc_punto_vta), int(asoc_nro), fecha=fecha_asoc)
                 if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
                     if imp_iva > 0:
                         logger.info("Reagregando IVA 21% después de limpieza de token")
