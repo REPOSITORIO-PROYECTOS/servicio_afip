@@ -273,6 +273,33 @@ FLUJO DE RECUPERACIÓN AUTOMÁTICA:
 - "AFIP rechazó la factura"
 - "Error interno del servidor"
 
+🚨 ERROR #4: RETURN FALTANTE EN RECONEXIÓN
+---------------------------------------------------------------------------
+MENSAJE DE ERROR:
+- AttributeError: 'NoneType' object has no attribute 'FECompUltimoAutorizado'
+
+CAUSA:
+- En la rama de recuperación dentro de app/afip_connector.py (conectar()), se reautenticaba y se reestablecía WSFEv1 pero no se retornaba el objeto.
+- El método terminaba sin return explícito y devolvía None; luego, app/factura_electronica.py intentaba usar wsfev1.CompUltimoAutorizado(...) y fallaba.
+
+IMPACTO:
+- 500 en el endpoint con mensaje "Error interno del servidor".
+- Interrupción del flujo de facturación hasta corregir reconexión.
+
+SOLUCIÓN:
+- Agregar return self.wsfev1 inmediatamente después de "Reconexión exitosa después de limpiar cache".
+- Validar en app/factura_electronica.py que wsfev1 no sea None y que posea método CompUltimoAutorizado antes de invocar.
+- Convertir tipo_afip y punto_venta a entero para evitar errores por tipos.
+
+CAMBIO APLICADO:
+- app/afip_connector.py: añadido return tras reconexión exitosa.
+- app/factura_electronica.py: validaciones previas de None y método; conversión a int de tipo_afip y punto_venta.
+
+ESCENARIOS QUE PUEDEN DISPARAR ESTE ERROR:
+- Reconexión por limpieza de cache (token/SSL/conexión) sin return.
+- Datos de entrada que provocan reconexiones y flujos no cubiertos por pruebas.
+- Concurrencia con reutilización incorrecta del conector (mitigado validando CUIT/entorno).
+
 ================================================================================
                               MÉTRICAS DE RENDIMIENTO
 ================================================================================

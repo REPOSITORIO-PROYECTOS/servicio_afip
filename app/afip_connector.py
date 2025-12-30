@@ -198,6 +198,7 @@ class AfipConnector:
                     self.wsfev1.Sign = wsaa.Sign
                     self.wsfev1.Conectar(wsdl=URL_WSFEv1, cache=CACHE)
                     logger.info("Reconexión exitosa después de limpiar cache")
+                    return self.wsfev1
 
                 except Exception as retry_error:
                     retry_error_msg = str(retry_error)

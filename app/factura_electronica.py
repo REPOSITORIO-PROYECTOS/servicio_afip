@@ -31,14 +31,20 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                 raise RuntimeError(f"Fallo de autenticación AFIP: {e}")
 
     try:
-        tipo_cbte = datos_factura.get("tipo_afip")
-        punto_vta = datos_factura.get("punto_venta")
+        tipo_cbte = int(datos_factura.get("tipo_afip"))
+        punto_vta = int(datos_factura.get("punto_venta"))
         asoc_tipo = datos_factura.get("asociado_tipo_afip")
         asoc_punto_vta = datos_factura.get("asociado_punto_venta")
         asoc_nro = datos_factura.get("asociado_numero_comprobante")
         asoc_fecha = datos_factura.get("asociado_fecha_comprobante")
         es_nota = tipo_cbte in [3, 8, 13, 2, 7, 12]
         
+        # Validaciones previas de conexión
+        if wsfev1 is None:
+            raise RuntimeError("Conexión AFIP no inicializada (wsfev1 es None)")
+        if not hasattr(wsfev1, "CompUltimoAutorizado"):
+            raise RuntimeError("Cliente AFIP inválido: falta método CompUltimoAutorizado")
+
         # Intentar obtener último comprobante con manejo robusto de errores
         max_reintentos_operacion = 2
         for intento_op in range(max_reintentos_operacion):
