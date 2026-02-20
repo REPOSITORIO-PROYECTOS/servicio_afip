@@ -18,6 +18,14 @@ credenciales_model = afipws_ns.model('Credenciales', {
     'clave_privada': fields.String(required=True, description='Contenido del archivo de clave privada (.key) en formato string')
 })  
 
+# Modelo para tributos individuales
+tributo_model = afipws_ns.model('Tributo', {
+    'id': fields.Integer(required=True, description='Código del tributo (99 = Otros Tributos)', example=99),
+    'descripcion': fields.String(required=True, description='Descripción del tributo (obligatorio para Id 99)', example='Impuesto Interno'),
+    'base_imponible': fields.Float(required=True, description='Base imponible sobre la cual se calcula el tributo', example=1000.0),
+    'alicuota': fields.Float(required=True, description='Porcentaje del tributo', example=5.0),
+    'importe': fields.Float(required=True, description='Monto total del tributo (BaseImp × Alic / 100)', example=50.0)
+})
 
 # Modelos para Swagger
 factura_data_model = afipws_ns.model('DatosFactura', {
@@ -25,12 +33,13 @@ factura_data_model = afipws_ns.model('DatosFactura', {
     'punto_venta': fields.Integer(required=True, description='Punto de venta', example=1),
     'tipo_documento': fields.Integer(required=True, description='Tipo de documento del receptor', example=80),
     'documento': fields.String(required=True, description='Número de documento del receptor', example='20123456789'),
-    'total': fields.Float(required=True, description='Importe total', example=1210.0),
+    'total': fields.Float(required=True, description='Importe total', example=1260.0),
     'id_condicion_iva': fields.Integer(required=True, description='ID de condición IVA del receptor', example=1),
     'neto': fields.Float(description='Importe neto gravado', example=1000.0),
     'iva': fields.Float(description='Importe IVA 21%', example=210.0),
     'neto105': fields.Float(description='Importe neto gravado 10.5%', example=0.0),
     'iva105': fields.Float(description='Importe IVA 10.5%', example=0.0),
+    'tributos': fields.List(fields.Nested(tributo_model), description='Lista de tributos a aplicar (opcional)', required=False),
     'asociado_tipo_afip': fields.Integer(description='Tipo de comprobante asociado'),
     'asociado_punto_venta': fields.Integer(description='Punto de venta del comprobante asociado'),
     'asociado_numero_comprobante': fields.Integer(description='Número de comprobante asociado'),
@@ -53,7 +62,6 @@ factura_response_model = afipws_ns.model('FacturaResponse', {
     'tipo_documento': fields.Integer(description='Tipo de documento del receptor'),
     'documento': fields.String(description='Número de documento del receptor'),
     'tipo_afip': fields.Integer(description='Tipo de comprobante AFIP'),
-    # ... (el resto de los campos de tu factura_response_model se quedan igual) ...
     'punto_venta': fields.Integer(description='Punto de venta'),
     'total': fields.Float(description='Importe total'),
     'exento': fields.Float(description='Importe exento'),
@@ -61,6 +69,8 @@ factura_response_model = afipws_ns.model('FacturaResponse', {
     'neto105': fields.Float(description='Importe neto gravado 10.5%'),
     'iva': fields.Float(description='Importe IVA 21%'),
     'iva105': fields.Float(description='Importe IVA 10.5%'),
+    'imp_trib': fields.Float(description='Importe total de tributos'),
+    'tributos': fields.List(fields.Nested(tributo_model), description='Lista de tributos aplicados', required=False),
     'resultado': fields.String(description='Resultado de la autorización'),
     'cae': fields.String(description='Número de CAE'),
     'vencimiento_cae': fields.String(description='Fecha de vencimiento del CAE'),

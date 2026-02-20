@@ -99,6 +99,23 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
         imp_iva = float(datos_factura.get("iva", 0.0))
         imp_tot_conc = 0.0
         imp_op_ex = 0.0
+        
+        # Procesar tributos si existen
+        tributos_lista = datos_factura.get("tributos", [])
+        imp_trib = 0.0
+        
+        if tributos_lista:
+            # Calcular el total de tributos sumando los importes
+            for tributo in tributos_lista:
+                imp_trib += float(tributo.get("importe", 0.0))
+            logger.info(f"Se procesaron {len(tributos_lista)} tributo(s) por un total de ${imp_trib:.2f}")
+        
+        # Validación: ImpTotal debe ser la suma exacta de todos los componentes
+        total_calculado = imp_neto + imp_iva + imp_trib + imp_tot_conc + imp_op_ex
+        diferencia = abs(total - total_calculado)
+        if diferencia > 0.01:
+            logger.warning(f"Validación de importes: Total enviado ${total:.2f} vs Calculado ${total_calculado:.2f} (diferencia: ${diferencia:.2f})")
+            raise ValueError(f"Error en validación de importes: ImpTotal (${total:.2f}) no coincide con la suma de componentes (${total_calculado:.2f}). Diferencia: ${diferencia:.2f}")
 
         if tipo_cbte in [11, 12, 13]:
             # Para Facturas C, el total va en el campo de Neto.
@@ -106,6 +123,7 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             # Todos los otros campos de importes deben ser cero, como lo pide AFIP.
             imp_iva = 0.0
             imp_tot_conc = 0.0
+            imp_trib = 0.0
  
 
         wsfev1.CrearFactura(
@@ -119,6 +137,7 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             imp_total=total,
             imp_neto=imp_neto,
             imp_iva=imp_iva,
+            imp_trib=imp_trib,
             imp_tot_conc=imp_tot_conc,
             imp_op_ex=imp_op_ex,
             fecha_cbte=datetime.date.today().strftime("%Y%m%d")
@@ -141,6 +160,28 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             else:
                 logger.info(f"Agregando detalle de IVA (0%) sobre base {imp_neto}")
                 wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+        
+        # Agregar tributos a la factura si existen
+        if tributos_lista and len(tributos_lista) > 0:
+            for tributo in tributos_lista:
+                tributo_id = int(tributo.get("id", 99))
+                tributo_desc = str(tributo.get("descripcion", "Otros Tributos"))
+                tributo_base = float(tributo.get("base_imponible", 0.0))
+                tributo_alic = float(tributo.get("alicuota", 0.0))
+                tributo_importe = float(tributo.get("importe", 0.0))
+                
+                # Validación: Si el Id es 99, la descripción es obligatoria
+                if tributo_id == 99 and not tributo_desc:
+                    raise ValueError("El campo 'descripcion' es obligatorio para tributos con Id 99")
+                
+                logger.info(f"Agregando tributo Id={tributo_id}, Desc='{tributo_desc}', Base=${tributo_base:.2f}, Alic={tributo_alic}%, Imp=${tributo_importe:.2f}")
+                wsfev1.AgregarTributo(
+                    tributo_id,
+                    tributo_desc,
+                    round(tributo_base, 2),
+                    round(tributo_alic, 2),
+                    round(tributo_importe, 2)
+                )
 
         logger.info("Solicitando CAE a AFIP...")
 
@@ -169,6 +210,7 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                         imp_total=total,
                         imp_neto=imp_neto,
                         imp_iva=imp_iva,
+                        imp_trib=imp_trib,
                         imp_tot_conc=imp_tot_conc,
                         imp_op_ex=imp_op_ex,
                         fecha_cbte=datetime.date.today().strftime("%Y%m%d")
@@ -183,6 +225,16 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                         else:
                             logger.info("Reagregando IVA 0% después de reconexión por TypeError")
                             wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+                    # Reagregar tributos si existen
+                    if tributos_lista:
+                        for tributo in tributos_lista:
+                            tributo_id = int(tributo.get("id", 99))
+                            tributo_desc = str(tributo.get("descripcion", "Otros Tributos"))
+                            tributo_base = float(tributo.get("base_imponible", 0.0))
+                            tributo_alic = float(tributo.get("alicuota", 0.0))
+                            tributo_importe = float(tributo.get("importe", 0.0))
+                            logger.info(f"Reagregando tributo Id={tributo_id} después de reconexión por TypeError")
+                            wsfev1.AgregarTributo(tributo_id, tributo_desc, round(tributo_base, 2), round(tributo_alic, 2), round(tributo_importe, 2))
                     continue
                 else:
                     raise ConnectionError(f"Fallo de conexión por TypeError en CAE después de {max_reintentos_cae} intentos: {error_msg}")
@@ -220,6 +272,7 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                         imp_total=total,
                         imp_neto=imp_neto,
                         imp_iva=imp_iva,
+                        imp_trib=imp_trib,
                         imp_tot_conc=imp_tot_conc,
                         imp_op_ex=imp_op_ex,
                         fecha_cbte=datetime.date.today().strftime("%Y%m%d")
@@ -236,6 +289,17 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                         else:
                             logger.info("Reagregando IVA 0% después de reconexión")
                             wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+                    
+                    # Reagregar tributos si existen
+                    if tributos_lista:
+                        for tributo in tributos_lista:
+                            tributo_id = int(tributo.get("id", 99))
+                            tributo_desc = str(tributo.get("descripcion", "Otros Tributos"))
+                            tributo_base = float(tributo.get("base_imponible", 0.0))
+                            tributo_alic = float(tributo.get("alicuota", 0.0))
+                            tributo_importe = float(tributo.get("importe", 0.0))
+                            logger.info(f"Reagregando tributo Id={tributo_id} después de reconexión")
+                            wsfev1.AgregarTributo(tributo_id, tributo_desc, round(tributo_base, 2), round(tributo_alic, 2), round(tributo_importe, 2))
                 else:
                     # Si no es error de conexión o ya agotamos reintentos, re-lanzar
                     if is_connection_error:
@@ -274,6 +338,7 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                     imp_total=total,
                     imp_neto=imp_neto,
                     imp_iva=imp_iva,
+                    imp_trib=imp_trib,
                     imp_tot_conc=imp_tot_conc,
                     imp_op_ex=imp_op_ex,
                     fecha_cbte=datetime.date.today().strftime("%Y%m%d")
@@ -288,6 +353,16 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                     else:
                         logger.info("Reagregando IVA 0% después de limpieza de token")
                         wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+                # Reagregar tributos si existen
+                if tributos_lista:
+                    for tributo in tributos_lista:
+                        tributo_id = int(tributo.get("id", 99))
+                        tributo_desc = str(tributo.get("descripcion", "Otros Tributos"))
+                        tributo_base = float(tributo.get("base_imponible", 0.0))
+                        tributo_alic = float(tributo.get("alicuota", 0.0))
+                        tributo_importe = float(tributo.get("importe", 0.0))
+                        logger.info(f"Reagregando tributo Id={tributo_id} después de limpieza de token")
+                        wsfev1.AgregarTributo(tributo_id, tributo_desc, round(tributo_base, 2), round(tributo_alic, 2), round(tributo_importe, 2))
                 # Reintentar CAE
                 wsfev1.CAESolicitar()
                 if wsfev1.Resultado != "A":
@@ -310,6 +385,8 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             "neto105": float(datos_factura.get("neto105", 0.0)),
             "iva": float(datos_factura.get("iva", 0.0)),
             "iva105": float(datos_factura.get("iva105", 0.0)),
+            "imp_trib": imp_trib,
+            "tributos": tributos_lista if tributos_lista else [],
             "resultado": wsfev1.Resultado,
             "cae": wsfev1.CAE,
             "vencimiento_cae": wsfev1.Vencimiento,

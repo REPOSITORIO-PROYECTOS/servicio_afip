@@ -10,7 +10,8 @@ services:
       # Mapea el puerto 8002 de tu máquina (localhost) al puerto 8002
       # donde Gunicorn está escuchando DENTRO del contenedor.
       # PUERTO_EXTERNO:PUERTO_INTERNO
-      - "8002:8002"
+      # IMPORTANTE: Se usa 127.0.0.1 para que NO quede expuesto a la red externa.
+      - "127.0.0.1:8002:8002"
     restart: unless-stopped
     healthcheck:
       test:
@@ -32,6 +33,10 @@ services:
       timeout: "5s"
       retries: 3
       start_period: "25s"
+    networks:
+      - default
+      - red_afip
+
   afip_monitor:
     image: docker:27.3.1-cli
     user: root
@@ -60,3 +65,7 @@ services:
             echo "$$msg";
           done
     restart: unless-stopped
+
+networks:
+  red_afip:
+    external: true

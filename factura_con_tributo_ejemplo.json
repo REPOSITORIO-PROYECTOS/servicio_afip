@@ -1,0 +1,28 @@
+{
+    "credenciales": {
+        "cuit": "20446344189",
+        "certificado": "-----BEGIN CERTIFICATE-----\nTU_CERTIFICADO_AQUI\n-----END CERTIFICATE-----\n",
+        "clave_privada": "-----BEGIN PRIVATE KEY-----\nTU_CLAVE_PRIVADA_AQUI\n-----END PRIVATE KEY-----\n"
+    },
+    "datos_factura": {
+        "tipo_afip": 1,
+        "punto_venta": 1,
+        "tipo_documento": 80,
+        "documento": "30111111118",
+        "total": 1260.00,
+        "id_condicion_iva": 1,
+        "neto": 1000.00,
+        "iva": 210.00,
+        "neto105": 0,
+        "iva105": 0,
+        "tributos": [
+            {
+                "id": 99,
+                "descripcion": "Impuesto Interno",
+                "base_imponible": 1000.00,
+                "alicuota": 5.00,
+                "importe": 50.00
+            }
+        ]
+    }
+}

@@ -6,6 +6,50 @@ OBJETIVO:
 Instrucciones claras para invocar correctamente el endpoint de facturación del microservicio AFIP usando credenciales dinámicas (multi-tenant) y evitar el uso de un CUIT fijo.
 
 --------------------------------------------------------------------------------
+0. ESTADO Y VERIFICACIÓN DEL SERVICIO
+--------------------------------------------------------------------------------
+El servicio se ejecuta en Docker y por seguridad escucha SOLO en la interfaz local (127.0.0.1).
+
+Verificar que el servicio está corriendo:
+  $ docker ps
+  Debe mostrar el contenedor 'servicio_afip-afip_service-1' con estado 'Up' y puerto '127.0.0.1:8002->8002/tcp'.
+
+Verificar salud del servicio (Healthcheck):
+  $ curl http://127.0.0.1:8002/afipws/test
+  Respuesta esperada: {"test": "ok"}
+
+NOTA IMPORTANTE DE SEGURIDAD:
+El servicio no está expuesto a la red externa (0.0.0.0).
+- Si se consume desde el mismo host: Usar http://127.0.0.1:8002
+- Si se consume desde otro contenedor Docker en la misma red: Usar http://afip_service:8002
+
+--------------------------------------------------------------------------------
+0.1. CONFIGURACIÓN EXTRA PARA SERVICIOS CONSUMIDORES (DOCKER)
+--------------------------------------------------------------------------------
+Si tu aplicación consumidora (ej. 'backend-api') corre en otro contenedor Docker, DEBES conectarla a la misma red para que pueda ver a este servicio.
+
+1. Asegúrate de que la red compartida exista (ya fue creada):
+   $ docker network create red_afip || true
+
+2. Edita el 'docker-compose.yml' de tu aplicación consumidora y agrega la red externa:
+
+   networks:
+     red_afip:
+       external: true
+
+3. Asigna esa red a tu servicio consumidor:
+
+   services:
+     tu_app_backend:
+       ...
+       networks:
+         - default
+         - red_afip
+
+4. Configura la URL de consumo en tu app:
+   AFIP_SERVICE_URL=http://afip_service:8002
+
+--------------------------------------------------------------------------------
 1. ENDPOINT PRINCIPAL DE FACTURACIÓN Y NOTAS
 --------------------------------------------------------------------------------
 Método: POST
@@ -44,7 +88,68 @@ Campos mínimos requeridos:
 
 Opcionales según caso:
 - neto / iva / neto105 / iva105
+- tributos (array de objetos tributo)
 - asociado_tipo_afip / asociado_punto_venta / asociado_numero_comprobante / asociado_fecha_comprobante (OBLIGATORIOS si es Nota Crédito/Débito)
+
+--------------------------------------------------------------------------------
+1.1. SOPORTE DE TRIBUTOS
+--------------------------------------------------------------------------------
+El servicio ahora soporta el envío de tributos adicionales (ej: Impuesto Interno, 
+Percepciones, etc.) que se deben incluir en la factura según las regulaciones de AFIP.
+
+Estructura del array "tributos" (opcional):
+{
+  "tributos": [
+    {
+      "id": 99,
+      "descripcion": "Impuesto Interno",
+      "base_imponible": 1000.00,
+      "alicuota": 5.00,
+      "importe": 50.00
+    }
+  ]
+}
+
+Campos del tributo:
+- id (entero): Código del tributo según AFIP. Si usás 99 = "Otros Tributos"
+- descripcion (string): OBLIGATORIO si id=99. Descripción del impuesto
+- base_imponible (decimal): Base sobre la cual se calcula el tributo (>= 0)
+- alicuota (decimal): Porcentaje del tributo (ej: 5.0 para 5%)
+- importe (decimal): Monto total del tributo (base_imponible × alicuota / 100)
+
+VALIDACIÓN CRÍTICA:
+El campo "total" debe ser la suma EXACTA de:
+  total = neto + iva + imp_trib + imp_tot_conc + imp_op_ex
+
+Donde imp_trib es la suma de todos los importes de tributos.
+Error tolerable: máximo 0.01 por cantidad de tributos.
+Si la diferencia es mayor, AFIP rechazará la factura.
+
+Ejemplo completo con tributo:
+{
+  "credenciales": { ... },
+  "datos_factura": {
+    "tipo_afip": 1,
+    "punto_venta": 1,
+    "tipo_documento": 80,
+    "documento": "30111111118",
+    "total": 1260.00,
+    "id_condicion_iva": 1,
+    "neto": 1000.00,
+    "iva": 210.00,
+    "tributos": [
+      {
+        "id": 99,
+        "descripcion": "Impuesto Interno",
+        "base_imponible": 1000.00,
+        "alicuota": 5.00,
+        "importe": 50.00
+      }
+    ]
+  }
+}
+
+En este ejemplo: total (1260) = neto (1000) + iva (210) + tributo (50)
 
 --------------------------------------------------------------------------------
 2. TABLA RESUMEN TIPOS DE COMPROBANTE (tipo_afip)
@@ -66,6 +171,9 @@ Antes de enviar:
 [ ] total > 0
 [ ] Si A/B: neto + iva coherentes
 [ ] Si C: forzar iva = 0
+[ ] Si tiene tributos: validar que total = neto + iva + sum(tributos.importe)
+[ ] Si tributo.id = 99: descripcion es OBLIGATORIA
+[ ] Si tributo: validar que importe = base_imponible × alicuota / 100
 [ ] Si nota crédito/débito: todos los campos asociado_*
 [ ] Documento numérico si tipo_documento != 99
 [ ] punto_venta int
@@ -159,6 +267,45 @@ Contenido nota_credito_a.json:
     "asociado_fecha_comprobante": "2025-09-24"
   }
 }
+
+Ejemplo curl (Factura A con Tributo - Impuesto Interno 5%):
+curl -s -X POST http://HOST:PUERTO/afipws/facturador \
+  -H "Content-Type: application/json" \
+  -d @factura_a_con_tributo.json | jq
+
+Contenido factura_a_con_tributo.json:
+{
+  "credenciales": {
+    "cuit": "30718331680",
+    "certificado": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+    "clave_privada": "-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----"
+  },
+  "datos_factura": {
+    "tipo_afip": 1,
+    "punto_venta": 1,
+    "tipo_documento": 80,
+    "documento": "30111111118",
+    "total": 1260.00,
+    "id_condicion_iva": 1,
+    "neto": 1000.00,
+    "iva": 210.00,
+    "tributos": [
+      {
+        "id": 99,
+        "descripcion": "Impuesto Interno",
+        "base_imponible": 1000.00,
+        "alicuota": 5.00,
+        "importe": 50.00
+      }
+    ]
+  }
+}
+
+NOTA: En el ejemplo anterior:
+- Neto gravado: $1000
+- IVA 21%: $210 (1000 × 0.21)
+- Impuesto Interno 5%: $50 (1000 × 0.05)
+- Total: $1260 (1000 + 210 + 50) ✓
 
 Ejemplo curl (Nota de Crédito B sobre Factura B asociada):
 curl -s -X POST http://HOST:PUERTO/afipws/facturador \
