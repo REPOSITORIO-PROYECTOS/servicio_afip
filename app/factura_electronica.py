@@ -1,10 +1,65 @@
 # app/factura_electronica.py
 import datetime
 import ssl
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 import logging
 from app.logger_setup import logger
 from app.afip_connector import afip_conector
+
+# Alicuotas AFIP WSFE (Id AlicIva): 3=0%, 4=10.5%, 5=21%
+ALIC_IVA_0 = 3
+ALIC_IVA_105 = 4
+ALIC_IVA_21 = 5
+
+
+def _float_dato(datos: Dict[str, Any], key: str) -> float:
+    try:
+        return float(datos.get(key, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def resolver_importes_iva(
+    datos_factura: Dict[str, Any],
+) -> Tuple[float, float, float, float, float, float]:
+    """
+    Separa bases/IVA 21% y 10,5% y calcula ImpNeto/ImpIVA totales para WSFE.
+    Returns: neto21, iva21, neto105, iva105, imp_neto, imp_iva
+    """
+    neto21 = _float_dato(datos_factura, "neto")
+    iva21 = _float_dato(datos_factura, "iva")
+    neto105 = _float_dato(datos_factura, "neto105")
+    iva105 = _float_dato(datos_factura, "iva105")
+    imp_neto = round(neto21 + neto105, 2)
+    imp_iva = round(iva21 + iva105, 2)
+    return neto21, iva21, neto105, iva105, imp_neto, imp_iva
+
+
+def _agregar_alicuotas_iva(
+    wsfev1: Any,
+    tipo_cbte: int,
+    neto21: float,
+    iva21: float,
+    neto105: float,
+    iva105: float,
+    *,
+    contexto: str = "",
+) -> None:
+    """Agrega AlicIva 21% y/o 10,5% (y 0% solo si hay neto21 sin IVA). No aplica a Factura C."""
+    if tipo_cbte in [11, 12, 13]:
+        return
+    prefijo = f"{contexto} " if contexto else ""
+    if neto21 > 0.0 or iva21 > 0.0:
+        if iva21 > 0.0:
+            logger.info(f"{prefijo}Agregando detalle de IVA (21%) sobre base {neto21}")
+            wsfev1.AgregarIva(ALIC_IVA_21, round(neto21, 2), round(iva21, 2))
+        else:
+            logger.info(f"{prefijo}Agregando detalle de IVA (0%) sobre base {neto21}")
+            wsfev1.AgregarIva(ALIC_IVA_0, round(neto21, 2), 0.0)
+    if neto105 > 0.0 or iva105 > 0.0:
+        logger.info(f"{prefijo}Agregando detalle de IVA (10,5%) sobre base {neto105}")
+        wsfev1.AgregarIva(ALIC_IVA_105, round(neto105, 2), round(iva105, 2))
+
 
 def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], production: bool = True) -> Dict[str, Any]:
     """
@@ -94,9 +149,8 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
 
         total = float(datos_factura.get("total", 0.0))
         
-        # Lógica de importes
-        imp_neto = float(datos_factura.get("neto", 0.0))
-        imp_iva = float(datos_factura.get("iva", 0.0))
+        # Lógica de importes (21% + 10,5% carnes)
+        neto21, iva21, neto105, iva105, imp_neto, imp_iva = resolver_importes_iva(datos_factura)
         imp_tot_conc = 0.0
         imp_op_ex = 0.0
         
@@ -122,6 +176,7 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             imp_neto = total
             # Todos los otros campos de importes deben ser cero, como lo pide AFIP.
             imp_iva = 0.0
+            neto21 = iva21 = neto105 = iva105 = 0.0
             imp_tot_conc = 0.0
             imp_trib = 0.0
  
@@ -153,13 +208,7 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
             fecha_asoc = str(asoc_fecha).replace("-", "")
             wsfev1.AgregarCmpAsoc(asoc_tipo, asoc_pv_int, asoc_nro_int, fecha=fecha_asoc)
 
-        if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
-            if imp_iva > 0:
-                logger.info(f"Agregando detalle de IVA (21%) sobre base {imp_neto}")
-                wsfev1.AgregarIva(5, round(imp_neto,2), round(imp_iva,2))
-            else:
-                logger.info(f"Agregando detalle de IVA (0%) sobre base {imp_neto}")
-                wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+        _agregar_alicuotas_iva(wsfev1, tipo_cbte, neto21, iva21, neto105, iva105)
         
         # Agregar tributos a la factura si existen
         if tributos_lista and len(tributos_lista) > 0:
@@ -218,13 +267,10 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                     if es_nota:
                         fecha_asoc = str(asoc_fecha).replace("-", "")
                         wsfev1.AgregarCmpAsoc(asoc_tipo, int(asoc_punto_vta), int(asoc_nro), fecha=fecha_asoc)
-                    if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
-                        if imp_iva > 0:
-                            logger.info("Reagregando IVA 21% después de reconexión por TypeError")
-                            wsfev1.AgregarIva(5, round(imp_neto,2), round(imp_iva,2))
-                        else:
-                            logger.info("Reagregando IVA 0% después de reconexión por TypeError")
-                            wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+                    _agregar_alicuotas_iva(
+                        wsfev1, tipo_cbte, neto21, iva21, neto105, iva105,
+                        contexto="Reagregando tras TypeError",
+                    )
                     # Reagregar tributos si existen
                     if tributos_lista:
                         for tributo in tributos_lista:
@@ -281,14 +327,10 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                         fecha_asoc = str(asoc_fecha).replace("-", "")
                         wsfev1.AgregarCmpAsoc(asoc_tipo, int(asoc_punto_vta), int(asoc_nro), fecha=fecha_asoc)
                     
-                    # Reagregar IVA si corresponde
-                    if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
-                        if imp_iva > 0:
-                            logger.info("Reagregando IVA 21% después de reconexión")
-                            wsfev1.AgregarIva(5, round(imp_neto,2), round(imp_iva,2))
-                        else:
-                            logger.info("Reagregando IVA 0% después de reconexión")
-                            wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+                    _agregar_alicuotas_iva(
+                        wsfev1, tipo_cbte, neto21, iva21, neto105, iva105,
+                        contexto="Reagregando tras reconexión",
+                    )
                     
                     # Reagregar tributos si existen
                     if tributos_lista:
@@ -346,13 +388,10 @@ def facturar(credenciales: Dict[str, str], datos_factura: Dict[str, Any], produc
                 if es_nota:
                     fecha_asoc = str(asoc_fecha).replace("-", "")
                     wsfev1.AgregarCmpAsoc(asoc_tipo, int(asoc_punto_vta), int(asoc_nro), fecha=fecha_asoc)
-                if imp_neto > 0 and not (tipo_cbte in [11, 12, 13]):
-                    if imp_iva > 0:
-                        logger.info("Reagregando IVA 21% después de limpieza de token")
-                        wsfev1.AgregarIva(5, round(imp_neto,2), round(imp_iva,2))
-                    else:
-                        logger.info("Reagregando IVA 0% después de limpieza de token")
-                        wsfev1.AgregarIva(3, round(imp_neto,2), 0.0)
+                _agregar_alicuotas_iva(
+                    wsfev1, tipo_cbte, neto21, iva21, neto105, iva105,
+                    contexto="Reagregando tras limpieza de token",
+                )
                 # Reagregar tributos si existen
                 if tributos_lista:
                     for tributo in tributos_lista:
